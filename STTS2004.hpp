@@ -100,46 +100,63 @@ public:
 			static const uint16_t mask = 0b1111111100000000; // [8,9,10,11,12,13,14,15]
 		};
 		/* Bits EVSD: */
+		/* nEVENT behavior upon shutdown (default)  */
 		struct EVSD
 		{
 			static const uint16_t dflt = 0b1; // 1'b1
 			static const uint16_t mask = 0b0000000010000000; // [7]
+			static const uint16_t Deasserted_when_shutdown = 0b1; // The EVENT pin output is deasserted (not driven) when entering shutdown, and remains deasserted upon exit from shutdown until the next thermal sample is taken, or possibly sooner if EVENT is programmed for comparator mode. In interrupt mode, EVENT may or may not be asserted when exiting shutdown if a pending interrupt has not been cleared.
 		};
 		/* Bits TMOUT: */
+		/* bus timeout support  */
 		struct TMOUT
 		{
 			static const uint16_t dflt = 0b1; // 1'b1
 			static const uint16_t mask = 0b0000000001000000; // [6]
+			static const uint16_t SMBus_compatible = 0b1; // for STTS2004-SMBus compatible 25 ms - 35 ms
 		};
 		/* Bits VHV: */
+		/* (VHV) high voltage support for A0 (pin 1)  */
 		struct VHV
 		{
 			static const uint16_t dflt = 0b1; // 1'b1
 			static const uint16_t mask = 0b0000000000100000; // [5]
+			static const uint16_t Voltage_high = 0b1; // STTS2004 supports a voltage up to 10 volts on the A0 pin - (default)
 		};
 		/* Bits TRES1: */
+		/* Temperature resolution  */
 		struct TRES1
 		{
 			static const uint16_t dflt = 0b01; // 2'b1
 			static const uint16_t mask = 0b0000000000011000; // [3,4]
+			static const uint16_t Rolution_9_bit = 0b00; // bit, 0.5 °C/LSB
+			static const uint16_t Rolution_10_bit = 0b01; // 10 bit, 0.25 °C/LSB - default resolution
+			static const uint16_t Rolution_11_bit = 0b10; // 11 bit, 0.125 °C/LSB
+			static const uint16_t Rolution_12_bit = 0b11; // 12 bit, 0.0625 °C/LSB
 		};
 		/* Bits Wider_range: */
 		struct Wider_range
 		{
 			static const uint16_t dflt = 0b1; // 1'b1
 			static const uint16_t mask = 0b0000000000000100; // [2]
+			static const uint16_t Clamped_below_0 = 0b0; // Values lower than 0 °C will be clamped and represented as binary value '0'.
+			static const uint16_t Read_below_0 = 0b1; // Temperatures below 0 °C can be read and the Sign bit will be set accordingly
 		};
 		/* Bits Higher_precision: */
 		struct Higher_precision
 		{
 			static const uint16_t dflt = 0b1; // 1'b1
 			static const uint16_t mask = 0b0000000000000010; // [1]
+			static const uint16_t Low_accuracy = 0b0; // 
+			static const uint16_t High_accuracy = 0b1; // High accuracy ±1 °C over the active range and ±2 °C over the monitoring range (B-grade) (default).
 		};
 		/* Bits Alarm_and_critical_trips: */
 		struct Alarm_and_critical_trips
 		{
 			static const uint16_t dflt = 0b1; // 1'b1
 			static const uint16_t mask = 0b0000000000000001; // [0]
+			static const uint16_t Off = 0b0; // Alarm and critical trips turned OFF.
+			static const uint16_t On = 0b1; // Alarm and critical trips turned ON.
 		};
 	};
 	
@@ -162,18 +179,158 @@ public:
 	 *                                                                                                  *
 	\****************************************************************************************************/
 	
-	/* REG Configuration:
+	/*
+	 * REG Configuration:
+	 * The 16-bit configuration register stores various configuration modes that are used to set up
+	 * the sensor registers and configure according to application and JEDEC requirements (see
+	 * Table 9 on page 21 and Table 10 on page 21).
+	 * 
+	 * The temperature sensor configuration register holds the control and status bits of the
+	 * EVENT pin as well as general hysteresis on all limits. To avoid glitches on the EVENT
+	 * output pin, users should disable EVENT or CRITICAL functions prior to programming or
+	 * changing other device configuration settings.
+	 * 
+	 * 4.2.1 Event thresholds
+	 * All event thresholds use hysteresis as programmed in register address 0x01 (bits 10
+	 * through 9) to be set when they de-assert.
+	 * 
+	 * 4.2.2 Interrupt mode
+	 * The interrupt mode allows an event to occur where software may write a '1' to the clear
+	 * event bit (bit 5) to de-assert the event Interrupt output until the next trigger condition occurs.
+	 * 
+	 * 4.2.3 Comparator mode
+	 * The comparator mode enables the device to be used as a thermostat. READs and WRITEs
+	 * on the device registers will not affect the event output in comparator mode. The event signal
+	 * will remain asserted until temperature drops outside the range or is re-programmed to make
+	 * the current temperature “out of range”.
+	 * 
+	 * 4.2.4 Shutdown mode
+	 * The STTS2004 features a shutdown mode which disables all power-consuming activities
+	 * (e.g. temperature sampling operations), and leaves the serial interface active. This is
+	 * selected by setting the shutdown bit (bit 8) to '1'. In this mode, the devices consume the
+	 * minimum current (ISHDN), as shown in Table 30 on page 44.
+	 * NOTE: Bit 8 cannot be set to '1' while bits 6 and 7 (the lock bits) are set to '1'.
+	 * The device may be enabled for continuous operation by clearing bit 8 to '0'. In shutdown
+	 * mode, all registers may be read or written to. Power recycling will also clear this bit and
+	 * return the device to continuous mode as well.
+	 * If the device is shut down while the EVENT pin is asserted, then the Event output will be deasserted
+	 * during shutdown. It will remain de-asserted until the device is enabled for normal
+	 * operation. Once the device is enabled, it takes tCONV before the device can re-assert the
+	 * Event output.
 	 */
 	struct Configuration
 	{
 		static const uint16_t __address = 1;
 		
-		/* Bits Configuration: */
-		struct Configuration_
+		/* Bits reserved_0: */
+		/*
+		 * These bits will always read ‘0’ and writing to them will have no effect. For future
+		 * compatibility, all RFU bits must be programmed as ‘0’
+		 */
+		struct reserved_0
 		{
-			/* MODE - */
-			static const uint16_t dflt = 0b0000000000000000; // 16'h0
-			static const uint16_t mask = 0b1111111111111111; // [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+			static const uint16_t dflt = 0b00000; // 5'b0
+			static const uint16_t mask = 0b1111100000000000; // [11,12,13,14,15]
+		};
+		/* Bits Hysteresis: */
+		struct Hysteresis
+		{
+			static const uint16_t dflt = 0b00; // 2'b0
+			static const uint16_t mask = 0b0000011000000000; // [9,10]
+			static const uint16_t Disabled = 0b00; // Hysteresis is disabled (default)
+			static const uint16_t Enabled_1_5C = 0b01; // Hysteresis is enabled at 1.5 °C
+			static const uint16_t Enabled_3C = 0b10; // Hysteresis is enabled at 3 °C
+			static const uint16_t Enabled_6C = 0b11; // Hysteresis is enabled at 6 °C
+		};
+		/* Bits Shutdown_mode: */
+		struct Shutdown_mode
+		{
+			static const uint16_t dflt = 0b0; // 1'b0
+			static const uint16_t mask = 0b0000000100000000; // [8]
+			static const uint16_t Enabled = 0b0; // TS is enabled, continuous conversion
+			static const uint16_t When_shutdown = 0b1; // Shutdown TS when the shutdown, device, and A/D converter are disabled in order to save power. No event conditions will be asserted; when either of the lock bits (bit6 or bit7) is set, then this bit cannot be altered until it is unlocked. It can be cleared at any time.
+		};
+		/* Bits Critical_lock_bit: */
+		struct Critical_lock_bit
+		{
+			static const uint16_t dflt = 0b0; // 1'b0
+			static const uint16_t mask = 0b0000000010000000; // [7]
+			static const uint16_t Not_locked = 0b0; // Critical trip is not locked and can be altered (this is the default).
+			static const uint16_t Locked = 0b1; // Critical trip register settings cannot be altered. This bit is initially cleared. When set, this bit returns a logic '1' and remains locked until cleared by an internal p
+		};
+		/* Bits Alarm_lock_bit: */
+		struct Alarm_lock_bit
+		{
+			static const uint16_t dflt = 0b0; // 1'b0
+			static const uint16_t mask = 0b0000000001000000; // [6]
+			static const uint16_t Not_locked = 0b0; // Alarm trips are not locked and can be altered.
+			static const uint16_t Locked = 0b1; // Alarm trip register settings cannot be altered. This bit is initially cleared. When set, this bit returns a logic '1' and remains locked until cleared by an internal power-on reset. These bits can be written to with a single WRITE, and do not require double WRITEs.
+		};
+		/* Bits Clear_event: */
+		/*
+		 * Writing to this register has no effect on overall device functioning in comparator mode.
+		 * When read, this bit will always return a logic '0' result.
+		 */
+		struct Clear_event
+		{
+			/* MODE w */
+			static const uint16_t dflt = 0b0; // 1'b0
+			static const uint16_t mask = 0b0000000000100000; // [5]
+			static const uint16_t No_effect = 0b0; // 
+			static const uint16_t Clear = 0b1; // Clears the active event in interrupt mode. The pin is released and will not assert until a new interrupt condition occurs. 
+		};
+		/* Bits Output_status: */
+		/*
+		 * NOTE: The actual incident causing the event can be determined from the read temperature
+		 * register. Interrupt events can be cleared by writing to the clear event bit (writing to
+		 * this bit will have no effect on overall device functioning).
+		 */
+		struct Output_status
+		{
+			/* MODE r */
+			static const uint16_t dflt = 0b0; // 1'b0
+			static const uint16_t mask = 0b0000000000010000; // [4]
+			static const uint16_t Not_asserted = 0b0; // Event output condition is not being asserted by this device.
+			static const uint16_t Asserted = 0b1; // Event output condition is being asserted by this device via the alarm window or critical trip event.
+		};
+		/* Bits Event_output_control: */
+		struct Event_output_control
+		{
+			static const uint16_t dflt = 0b0; // 1'b0
+			static const uint16_t mask = 0b0000000000001000; // [3]
+			static const uint16_t Disabled = 0b0; // Event output disabled (this is the default).
+			static const uint16_t Enabled = 0b1; // Event output enabled; when either of the lock bits (bit6 or bit7) is set, this bit cannot be altered until it is unlocked.
+		};
+		/* Bits Critical_event_only: */
+		struct Critical_event_only
+		{
+			static const uint16_t dflt = 0b0; // 1'b0
+			static const uint16_t mask = 0b0000000000000100; // [2]
+			static const uint16_t Alarm_or_critical_temp = 0b0; // Event output on alarm or critical temperature event.
+			static const uint16_t Temperature_above_critical = 0b1; // Event only if the temperature is above the value in the critical temperature register (TA > TCRIT); when the alarm window lock bit (bit6) is set, this bit cannot be altered until it is unlocked. 
+		};
+		/* Bits Event_polarity: */
+		/*
+		 * The event polarity bit controls the active state of the EVENT pin. The EVENT pin is driven to this state
+		 * when it is asserted.
+		 * NOTE: As this device is used in DIMM (memory modules) applications, it is strongly recommended
+		 * that only the active-low polarity (default) is used. This will provide full compatibility
+		 * with the STTS2002. This is the recommended configuration for the STTS2004.
+		 */
+		struct Event_polarity
+		{
+			static const uint16_t dflt = 0b0; // 1'b0
+			static const uint16_t mask = 0b0000000000000010; // [1]
+			static const uint16_t Active_low = 0b0; // Active-low Requires a pull-up resistor to set the inactive state of the open-drain output. The power to the pull-up resistor should not be greater than VDD + 0.2 V. Active state is logical “0”.
+			static const uint16_t Active_high = 0b1; // Active-high. The active state of the pin is then logical “1”. 
+		};
+		/* Bits Event_mode: */
+		struct Event_mode
+		{
+			static const uint16_t dflt = 0b0; // 1'b0
+			static const uint16_t mask = 0b0000000000000001; // [0]
+			static const uint16_t Comparator_output = 0b0; // Comparator output mode (this is the default).
+			static const uint16_t Interrupt = 0b1; // Interrupt mode; when either of the lock bits (bit6 or bit7) is set, this bit cannot be altered until it is unlocked.
 		};
 	};
 	
